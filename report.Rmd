@@ -1,0 +1,71 @@
+---
+title: "Titanic Survival Analysis"
+author: "Jacob Salway"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Titanic 
+
+In this report I will attempt to predict the survival of passengers on the Titanic.
+
+# Loading and cleaning
+
+```{r, warning=F, message=F}
+library(ggplot2)
+library(dplyr)
+
+# load data
+test <- read.csv('data/test.csv')
+train <- read.csv('data/train.csv')
+
+# flag so we can separate later
+test$source <- "test"
+train$source <- "train"
+
+# combine train and test data
+titanic <- bind_rows(train, test)
+
+# quick data summary
+str(titanic)
+summary(titanic)
+```
+
+Missing data:
+
+```{r}
+
+colSums(is.na(titanic))
+colSums(titanic == "")
+
+# impute mean for missing age values
+titanic$Age[is.na(titanic$Age)] <- mean(titanic$Age, na.rm=T)
+
+# sample from existing data for missing embarked values
+freq = data.frame(table(titanic$Embarked))
+freq <- freq[freq$Var1 != "",]
+freq$prob <- freq$Freq / sum(freq$Freq)
+titanic$Embarked[titanic$Embarked == ""] <- sample(freq$Var1, prob=freq$prob, replace=T)
+
+# verify
+colSums(is.na(titanic))
+colSums(titanic == "")
+```
+
+Reclassifying features:
+
+```{r}
+# convert
+cols = c("Survived", "Pclass", "Embarked", "source")
+for (i in cols) {
+  titanic[,i] <- as.factor(titanic[,i])
+}
+
+# new structure
+str(titanic)
+```
+
+# Analysis
