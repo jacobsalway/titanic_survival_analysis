@@ -1,204 +1,108 @@
 ---
-title: "Titanic Survival Analysis"
-author: "Jacob Salway"
-output: html_document
+title: 'Titanic Survival Analysis'
+author: 'Jacob Salway'
+output:
+  html_document:
+    number_sections: true
+    toc: true
+    theme: lumen
+    highlight: tango
 ---
 
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
-```
+# Intro
 
-# Titanic 
+In this report, I will analyse the Titanic dataset from the challenge hosted on Kaggle. I will do:
 
-In this report I will attempt to predict the survival of passengers on the Titanic.
+* Cleaning and missing value imputation
+* Exploratory data analysis
+* Feature engineering
+* Prediction
 
-# Loading and cleaning
+## Load data
 
-```{r, warning=F, message=F}
+```{r, message=F}
+# load packages
 library(ggplot2)
 library(dplyr)
 library(janitor)
+```
 
-# load data
-test <- read.csv('data/test.csv')
+After loading the packages, let's take a look at the data.
+
+```{r, message=F, warning=F}
 train <- read.csv('data/train.csv')
+test <- read.csv('data/test.csv')
 
-# flag so we can separate later
-test$source <- "test"
-train$source <- "train"
+# for separation later
+train$source <- 'train'
+test$source <- 'test'
 
-# combine train and test data
-titanic <- bind_rows(train, test)
+# combine
+full <- bind_rows(train, test)
 
-# lowercase names
-titanic <- clean_names(titanic)
+# clean names
+full <- clean_names(full)
 
-# quick data summary
-str(titanic)
-summary(titanic)
+# check data
+str(full)
 ```
 
-Missing data:
+Let's just reclassify some existing variables to factors.
 
 ```{r}
-
-colSums(is.na(titanic))
-colSums(titanic == "")
-
-# impute mean for missing age values
-# titanic$age[is.na(titanic$age)] <- mean(titanic$age, na.rm=T)
-
-# sample from existing data for missing embarked values
-freq = data.frame(table(titanic$embarked))
-freq <- freq[freq$Var1 != "",]
-freq$prob <- freq$Freq / sum(freq$Freq)
-freq$Var1 <- as.character(freq$Var1) # otherwise it samples with integers
-size = nrow(titanic[titanic$embarked == "",])
-titanic$embarked[titanic$embarked == ""] <- sample(freq$Var1, prob=freq$prob, replace=T, size=size)
-
-# verify
-colSums(is.na(titanic))
-colSums(titanic == "")
-```
-
-Reclassifying features:
-
-```{r}
-# convert to factors
 cols = c("survived", "pclass", "embarked", "source")
 for (i in cols) {
-  titanic[,i] <- as.factor(titanic[,i])
-}
-
-# family size
-titanic$family_size <- titanic$sib_sp + titanic$parch + 1
-
-# new structure
-str(titanic)
-```
-
-# Analysis
-
-Because we've cleaned the data, it's time to separate it back into training and test data.
-
-```{r}
-train <- titanic[titanic$source == "train",]
-test <- titanic[titanic$source == "test",]
-```
-
-Let's start with some general demographic information.
-
-```{r}
-# setting up some charting presets
-age_x <- scale_x_continuous(breaks=seq(0, 100, 10))
-prop_y <- scale_y_continuous()
-
-# age and gender distribution
-t = titanic[!is.na(titanic$age),]
-
-ggplot(t, aes(x=age, fill=sex)) +
-  geom_histogram(binwidth=3) +
-  labs(x="Age", y="Count", title="Age and gender") +
-  scale_x_continuous(breaks=seq(0, 100, 10))
-
-# gender proportions
-t = titanic %>%
-  filter(!is.na(age)) %>%
-  mutate(age=round(age/3)*3) %>%
-  group_by(age, sex) %>%
-  summarise(n=n()) %>%
-  mutate(prop=n/sum(n))
-
-ggplot(t, aes(x=age, y=prop)) +
-  geom_bar(aes(fill=sex), stat="identity") +
-  labs(x="Age", y="Proportion", title="Gender proportions") +
-  scale_x_continuous(breaks=seq(0, 100, 10)) +
-  scale_y_continuous(breaks=seq(0, 1, 0.25), labels=scales::percent) +
-  geom_hline(yintercept=0.5)
-```
-
-Now let's try to visually see if any variables had a major impact on whether a person survived.
-
-## Variable analysis
-
-Let's start by defining a group proportion function.
-
-```{r}
-calc_prop <- function(x, y) {
-  t = table(x, y)
-  for (i in 1:dim(t)[1]) {
-    t[i,] <- round(t[i,]/sum(t[i,])*100)/100
-  }
-  return(t)
+  full[,i] <- as.factor(full[,i])
 }
 ```
 
-### Sex
+## Missing values
+
+Let's take a look at what's missing.
 
 ```{r}
-t = calc_prop(train$sex, train$survived)
-t
-
-ggplot(train, aes(x=sex, fill=survived)) +
-  geom_bar(position="fill")
+colSums(is.na(full))
+colSums(full == '')
 ```
 
-### Age
+We can see that we have a lot of missing age and cabin values, one missing fare value and two missing embarked values. The missing survival values are due to the test dataset not having a survival factor given. For fare and embarked, we'll just impute with the median and mode respectively.
 
 ```{r}
-t = train %>%
-  filter(!is.na(age))
+full$fare[is.na(full$fare)] <- median(full$fare, na.rm=T)
 
-ggplot(t, aes(x=age, fill=survived)) +
-  geom_histogram(binwidth=3) +
-  labs(x="Age", y="Count", title="Age and survival") +
-  age_x
-
-ggplot(t, aes(x=age, fill=survived)) +
-  geom_histogram(binwidth=3, position="fill") +
-  labs(x="Age", y="Proportion", title="Age and survival proportions") +
-  age_x + prop_y
+# ugly workaround for mode of factor
+full$embarked[full$embarked == ''] <- tail(names(sort(table(full$embarked))), 1)
 ```
 
-### Embarked
+To impute the age, we're going to use a slightly better method than just using the median. Instead, we're going to sample from the existing distribution of ages.
 
 ```{r}
-t = calc_prop(train$embarked, train$survived)
-t
+freq = data.frame(table(full$age))
+freq = freq[freq$Var1 != "",]
+freq$prob <- freq$Freq / sum(freq$Freq)
+size = nrow(full[is.na(full$age),]) # num rows to sample
 
-ggplot(train, aes(x=embarked, fill=survived)) +
-  geom_bar(position="fill")
+sampled = sample(freq$Var1, prob=freq$prob, replace=T, size=size)
+full$age[is.na(full$age)] <- sampled
 ```
 
-### Passenger class
+Let's compare the distribution of the sampled ages to the real ages.
 
 ```{r}
-t = calc_prop(train$pclass, train$survived)
-t
+full %>%
+  ggplot(aes(x=age)) +
+  geom_histogram()
 
-ggplot(train, aes(x=pclass, fill=survived)) +
-  geom_bar(position="fill")
+t = data.frame(sampled)
+t$sampled = as.numeric(t$sampled)
+t %>%
+  ggplot(aes(x=sampled)) +
+  geom_histogram()
 ```
 
-### Fare
+Let's check that we sorted out those null values.
 
 ```{r}
-ggplot(train, aes(x=fare, fill=survived)) +
-  geom_histogram(binwidth=30, position="fill") +
-  scale_x_continuous(breaks=seq(0, 1000, 100))
+colSums(is.na(full))
+colSums(full == '')
 ```
-
-### Family size
-
-```{r}
-t = calc_prop(train$family_size, train$survived)
-t
-
-ggplot(train, aes(x=family_size, fill=survived)) +
-  geom_bar(position="fill") +
-  scale_x_continuous(breaks=seq(1, 20, 1))
-```
-
-### Conclusion
-
-# Prediction
