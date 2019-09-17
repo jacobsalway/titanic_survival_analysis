@@ -5,9 +5,14 @@ output:
   html_document:
     number_sections: true
     toc: true
-    theme: lumen
+    toc_float: true
+    theme: cosmo
     highlight: tango
 ---
+
+```{r setup, include=FALSE}
+# knitr::opts_chunk$set(out.height="\\textheight", out.width="\\textwidth")
+```
 
 # Intro
 
@@ -23,7 +28,9 @@ In this report, I will analyse the Titanic dataset from the challenge hosted on 
 ```{r, message=F}
 # load packages
 library(ggplot2)
+library(gridExtra)
 library(dplyr)
+library(reshape2)
 library(janitor)
 ```
 
@@ -50,7 +57,7 @@ str(full)
 Let's just reclassify some existing variables to factors.
 
 ```{r}
-cols = c("survived", "pclass", "embarked", "source")
+cols = c('survived', 'embarked', 'source')
 for (i in cols) {
   full[,i] <- as.factor(full[,i])
 }
@@ -105,4 +112,195 @@ Let's check that we sorted out those null values.
 ```{r}
 colSums(is.na(full))
 colSums(full == '')
+
+full <- droplevels(full) # drop unused factor levels
 ```
+
+The only column with any null or empty values left is the cabin value, however this would be very difficult to impute so we're going to leave it.
+
+## Data columns
+
+* `passenger_id` is just the ID of the row.
+* `survived` is a binary variable indicating survival
+  * **1 = Survived**
+  * **0 = Didn't survive**
+* `pclass` is passenger class and indicates the socio-economic status of the passenger.
+  * **1 = Upper class**
+  * **2 = Middle class**
+  * **3 = Lower class**
+* `name`, `sex` and `age` are all as their name suggests.
+* `sib_sp` indicates the number of the passenger's siblings and spouses.
+* `parch` indicates the number of the passenger's parents and children.
+* `ticket` is the ticket number of the passenger.
+* `fare` is the passenger's fare.
+* `cabin` is the cabin number of the passenger.
+* `embarked` is the port the passenger embarked from.
+  * **C = Cherbourg**
+  * **Q = Queenstown**
+  * **S = Southampton**
+
+# Feature engineering
+
+Feature engineering is using our knowledge and intuition to create new features or transform existing ones to provide additional information for our model to analyse. Let's begin by looking at a correlation matrix of the major numerical variables.
+
+```{r}
+t = full %>%
+  filter(source=='train') %>%
+  select(age, fare, parch, pclass, sib_sp, survived) %>%
+  mutate(survived=as.numeric(survived)) # need survival as factor for other charts
+
+t.mat = round(cor(t), 2)
+t.matlong = melt(t.mat)
+
+t.matlong %>%
+  ggplot(aes(x=Var1, y=Var2, fill=value)) +
+  geom_tile() +
+  geom_text(aes(Var1, Var2, label=value), color='black', size=4)
+#  scale_fill_gradient2(low='blue', high='red', mid='white', midpoint=0, limit=c(-1, 1))
+```
+
+Between variables other than survival, we can see there is a significant correlation between `sib_sp` and `parch`, and `pclass` and `fare`. For other variables and survival, we can see that `pclass` and `fare` have a significant correlation.
+
+Considering that `sib_sp` and `parch` are all counts of the passenger's family, let's just pool that all together into a `family_size` variable.
+
+```{r}
+full$family_size <- full$sib_sp + full$parch + 1 # add one for passenger
+```
+
+If we look at a sample of the the names in the dataset, we can see that each name has a title. This will definitely be useful information for our model so let's extract it.
+
+```{r}
+head(full$name)
+
+# split string and fetch second element which is the title
+full$title <- sapply(full$name, function(x) {strsplit(x, split='[,.]')[[1]][2]})
+
+# delete empty space before title
+full$title <- sub(' ', '', full$title)
+
+table(full$title)
+```
+
+We can see there are a lot of interesting titles. It's likely that these titles with small counts are all statistically significant, and this many separate categories would be problematic for our model, so let's compress the ones under a certain frequency.
+
+```{r}
+title_freq = data.frame(table(full$title))
+title_freq = title_freq[title_freq$Freq < 10,] # ten is a small number
+
+full$title[full$title %in% title_freq$Var1] <- 'Other'
+
+table(full$sex, full$title)
+```
+
+If we look at the distribution of the titles across genders, we can see most of the *noble* titles and all the masters were male.
+
+Let's look at our data set now.
+
+```{r}
+str(full)
+```
+
+# Exploratory analysis
+
+We're now going to do some exploratory data analysis. The first thing we're going to look at is the distribution of some of the major variables. Firstly let's look at the distribution of ages and survival proportion.
+
+```{r}
+# filter to only training data so we can see survival values
+train <- full %>%
+  filter(source=='train')
+
+sex_dist = train %>%
+  ggplot(aes(x=sex, fill=survived)) +
+  geom_bar(position='stack')
+
+sex_surv_prop = train %>%
+  ggplot(aes(x=sex, fill=survived)) +
+  geom_bar(position='fill')
+
+grid.arrange(sex_dist, sex_surv_prop, ncol=2)
+```
+
+We can see that there were nearly double the number of males, and that only 25% of males survived while nearly 75% of females survived. We can definitely say that sex will be a major variable in our model.
+
+Let's look at the distribution of some other major numerical variables now.
+
+```{r fig.height=5, fig.width=11}
+g1 = train %>%
+  ggplot(aes(x=fare)) +
+  geom_histogram(binwidth=10)
+
+g1p = train %>%
+  ggplot(aes(x=fare, fill=survived)) +
+  geom_histogram(binwidth=10, position='fill')
+
+grid.arrange(g1, g1p, ncol=2)
+
+g2 = train %>%
+  ggplot(aes(x=age)) +
+  geom_histogram(binwidth=3)
+
+g2p = train %>%
+  ggplot(aes(x=age, fill=survived)) +
+  geom_histogram(binwidth=3, position='fill')
+
+grid.arrange(g2, g2p, ncol=2)
+
+g3 = train %>%
+  ggplot(aes(x=family_size)) +
+  geom_histogram(binwidth=1)
+
+g3p = train %>%
+  ggplot(aes(x=family_size, fill=survived)) +
+  geom_histogram(binwidth=1, position='fill')
+
+grid.arrange(g3, g3p, ncol=2)
+```
+
+We can see that the distution of `family_size` is very right skewed and `age` is slightly right skewed. `fare` has a large clustering because of our mean value imputation.
+
+Now, let's take a look at the survival proportions in `embarked` and `pclass`.
+
+```{r}
+g1p = train %>%
+  ggplot(aes(x=embarked, fill=survived)) +
+  geom_bar(position='fill')
+
+g2p = train %>%
+  ggplot(aes(x=pclass, fill=survived)) +
+  geom_bar(position='fill')
+
+grid.arrange(g1p, g2p, ncol=2)
+```
+
+It seems like there is a distinct relationship between `embarked` and `pclass` with what seem to be statistically significant proportion differences. Let's test that.
+
+```{r}
+# embarked
+(tbl = table(train$embarked, train$survived))
+(chi = chisq.test(tbl))
+chi$p.value < 0.01
+# pclass
+(tbl = table(train$pclass, train$survived))
+(chi = chisq.test(tbl))
+chi$p.value < 0.01
+```
+
+We can see that our p-values are less than our level of significance, so we reject the null hypothesis and accept the alternative hypothesis to conclude that `embarked` and `pclass` are associated to survival.
+
+For our last graph, let's see how title relates to survival with gender.
+
+```{r}
+g1p = train %>%
+  filter(sex=='female') %>%
+  ggplot(aes(x=title, fill=survived)) +
+  geom_bar(position='fill', show.legend=F)
+
+g2p = train %>%
+  filter(sex=='male') %>%
+  ggplot(aes(x=title, fill=survived)) +
+  geom_bar(position='fill', show.legend=F)
+
+grid.arrange(g1p, g2p, ncol=2)
+```
+
+We can see that females are the most likely to survive with a single women having a nearly 75% survival rate. Males on the other hand are much more likely not to survive, especially men with the title of Mr. Notably, men with a title of Master had a greater than 50% survival rate.
