@@ -30,6 +30,8 @@ In this report, I will analyse the Titanic dataset from the challenge hosted on 
 library(ggplot2)
 library(gridExtra)
 library(dplyr)
+library(tidyverse)
+library(randomForest)
 library(reshape2)
 library(janitor)
 ```
@@ -161,11 +163,15 @@ t.matlong %>%
 
 Between variables other than survival, we can see there is a significant correlation between `sib_sp` and `parch`, and `pclass` and `fare`. For other variables and survival, we can see that `pclass` and `fare` have a significant correlation.
 
+## Family size
+
 Considering that `sib_sp` and `parch` are all counts of the passenger's family, let's just pool that all together into a `family_size` variable.
 
 ```{r}
 full$family_size <- full$sib_sp + full$parch + 1 # add one for passenger
 ```
+
+## Title
 
 If we look at a sample of the the names in the dataset, we can see that each name has a title. This will definitely be useful information for our model so let's extract it.
 
@@ -189,10 +195,28 @@ title_freq = title_freq[title_freq$Freq < 10,] # ten is a small number
 
 full$title[full$title %in% title_freq$Var1] <- 'Other'
 
+# change to factor
+full$title <- as.factor(full$title)
+
 table(full$sex, full$title)
 ```
 
 If we look at the distribution of the titles across genders, we can see most of the *noble* titles and all the masters were male.
+
+## Deck
+
+There's also some useful information in the `cabin` variable.
+
+```{r}
+full$cabin[full$cabin != ''][1:20]
+```
+
+We can see that data takes the pattern of **[A-Z][0-9][0-9]**. The letter in front of the number indicates the deck that the passenger's cabin was on. Some passengers have multiple cabins but they're mostly the same deck so we can just extract the first letter of cabin as a new factor. To deal with all the missing values in cabin we'll just replace them with a new group **M**.
+
+```{r}
+full$cabin[full$cabin == ''] <- "M" # replace null cabin values with m
+full$deck <- as.factor(sapply(full$cabin, function(x) strsplit(x, NULL)[[1]][[1]])) # first char of first string
+```
 
 Let's look at our data set now.
 
@@ -304,3 +328,87 @@ grid.arrange(g1p, g2p, ncol=2)
 ```
 
 We can see that females are the most likely to survive with a single women having a nearly 75% survival rate. Males on the other hand are much more likely not to survive, especially men with the title of Mr. Notably, men with a title of Master had a greater than 50% survival rate.
+
+# Model
+
+## Random forest
+
+For our machine learning model we're going to use a random forest classification model.
+
+```{r}
+# just training data
+train <- full %>%
+  filter(source=='train')
+test <- full %>%
+  filter(source=='test')
+
+# model
+formula = survived ~ pclass + sex + age + sib_sp + parch + fare + embarked + family_size + title + deck 
+classifier <- randomForest(formula, data=train)
+
+err = data.frame(classifier$err.rate)
+err = err %>% mutate(trees=1:n())
+err = melt(err, id.vars='trees')
+
+err %>%
+  ggplot(aes(x=trees, y=value)) +
+  geom_line(aes(color=variable))
+```
+
+This graph shows us the error rates for the random forest prediction. The red line represents the overall error rate, and the green and blue lines are the error rate for `survived = 0` and `survived = 1` predictions respectively. We can see that we predict death more accurately compared to survival. 
+
+## Variable importance
+
+Let's see the variable importance graph looks like.
+
+```{r}
+importance = importance(classifier)
+importance = data.frame(variables = row.names(importance), importance=round(importance[,'MeanDecreaseGini'], 2))
+
+importance %>%
+  ggplot(aes(x=reorder(variables, importance), y=importance, fill=importance)) +
+  geom_bar(stat='identity') +
+  coord_flip()
+```
+
+We can see that `title`, `fare`, `sex` and `age` were the most important variables for the random forest model. 
+
+## Performance measures
+
+Let's take a look at the confusion matrix and some typical machine learning scores.
+
+```{r}
+con_mat = data.frame(classifier$confusion)[,c('X0', 'X1')]
+con_mat
+
+tn = con_mat[,'X0'][1]
+fn = con_mat[,'X0'][2]
+fp = con_mat[,'X1'][1]
+tp = con_mat[,'X1'][2]
+
+accuracy = (tp + tn) / sum(con_mat)
+precision = tp / (tp + fp)
+sensitivity = tp / (tp + fn)
+f1 = 2*(1/((1/precision) + (1/sensitivity)))
+specificity = tn / (tn + fp)
+
+labels = c('accuracy', 'precision', 'sensitivity', 'f1', 'specificity')
+stats = c(accuracy, precision, sensitivity, f1, specificity)
+
+df = data.frame(labels=labels, stats=stats)
+df
+```
+
+We can see that our model had an accuracy of **0.83** meaning it correctly labelled passengers 83% of the time. A precision of **0.81** means that 81% of the passengers we predicted to survive did actually survive, and a sensitivity of **0.71** means that of the people who did survive, we correctly predicted 71% of them. The F1 score of **0.76** is the harmonic mean of precision and sensitivity. A specificity of **0.90**. means that out of all people who died, we correctly predicted 90% of them.
+
+# Prediction
+
+Let's actually use the model on the test data now.
+
+```{r}
+pred = predict(classifier, test)
+output = data.frame(PassengerId = test$passenger_id, Survived=pred)
+write.csv(output, 'titanic_pred.csv', row.names=F, quote=F)
+```
+
+I've submitted these predictions to Kaggle and got a score of 0.76, so reasonably close to our training accuracy score.
