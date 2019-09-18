@@ -34,6 +34,8 @@ library(tidyverse)
 library(randomForest)
 library(reshape2)
 library(janitor)
+
+theme_set(theme_minimal())
 ```
 
 After loading the packages, let's take a look at the data.
@@ -100,13 +102,15 @@ Let's compare the distribution of the sampled ages to the real ages.
 ```{r}
 full %>%
   ggplot(aes(x=age)) +
-  geom_histogram()
+  geom_histogram() +
+  labs(x='Age', y='Frequency', title='Age')
 
 t = data.frame(sampled)
 t$sampled = as.numeric(t$sampled)
 t %>%
   ggplot(aes(x=sampled)) +
-  geom_histogram()
+  geom_histogram() +
+  labs(x='Age', y='Frequency', title='Sampled age')
 ```
 
 Let's check that we sorted out those null values.
@@ -157,8 +161,9 @@ t.matlong = melt(t.mat)
 t.matlong %>%
   ggplot(aes(x=Var1, y=Var2, fill=value)) +
   geom_tile() +
-  geom_text(aes(Var1, Var2, label=value), color='black', size=4)
-#  scale_fill_gradient2(low='blue', high='red', mid='white', midpoint=0, limit=c(-1, 1))
+  geom_text(aes(Var1, Var2, label=value), color='black', size=4) +
+  labs(x='Variable', y='Variable', title='Correlation heatmap') +
+  scale_fill_gradient2(low='blue', high='red', mid='white', midpoint=0, limit=c(-1, 1))
 ```
 
 Between variables other than survival, we can see there is a significant correlation between `sib_sp` and `parch`, and `pclass` and `fare`. For other variables and survival, we can see that `pclass` and `fare` have a significant correlation.
@@ -235,11 +240,13 @@ train <- full %>%
 
 sex_dist = train %>%
   ggplot(aes(x=sex, fill=survived)) +
-  geom_bar(position='stack')
+  geom_bar(position='stack') +
+  labs(x='Sex', y='Count')
 
 sex_surv_prop = train %>%
   ggplot(aes(x=sex, fill=survived)) +
-  geom_bar(position='fill')
+  geom_bar(position='fill') +
+  labs(x='Sex', y='Proportion')
 
 grid.arrange(sex_dist, sex_surv_prop, ncol=2)
 ```
@@ -248,34 +255,40 @@ We can see that there were nearly double the number of males, and that only 25% 
 
 Let's look at the distribution of some other major numerical variables now.
 
-```{r fig.height=5, fig.width=11}
+```{r}
 g1 = train %>%
   ggplot(aes(x=fare)) +
-  geom_histogram(binwidth=10)
+  geom_histogram(binwidth=10) +
+  labs(x='Fare', y='Frequency')
 
 g1p = train %>%
   ggplot(aes(x=fare, fill=survived)) +
-  geom_histogram(binwidth=10, position='fill')
+  geom_histogram(binwidth=10, position='fill') +
+  labs(x='Fare', y='Proportion')
 
 grid.arrange(g1, g1p, ncol=2)
 
 g2 = train %>%
   ggplot(aes(x=age)) +
-  geom_histogram(binwidth=3)
+  geom_histogram(binwidth=3) +
+  labs(x='Age', y='Frequency')
 
 g2p = train %>%
   ggplot(aes(x=age, fill=survived)) +
-  geom_histogram(binwidth=3, position='fill')
+  geom_histogram(binwidth=3, position='fill') +
+  labs(x='Age', y='Proportion')
 
 grid.arrange(g2, g2p, ncol=2)
 
 g3 = train %>%
   ggplot(aes(x=family_size)) +
-  geom_histogram(binwidth=1)
+  geom_histogram(binwidth=1) +
+  labs('Family size', y='Frequency')
 
 g3p = train %>%
   ggplot(aes(x=family_size, fill=survived)) +
-  geom_histogram(binwidth=1, position='fill')
+  geom_histogram(binwidth=1, position='fill') +
+  labs(x='Family size', y='Proportion')
 
 grid.arrange(g3, g3p, ncol=2)
 ```
@@ -287,11 +300,13 @@ Now, let's take a look at the survival proportions in `embarked` and `pclass`.
 ```{r}
 g1p = train %>%
   ggplot(aes(x=embarked, fill=survived)) +
-  geom_bar(position='fill')
+  geom_bar(position='fill') +
+  labs(x='Embarked', y='Proportion')
 
 g2p = train %>%
   ggplot(aes(x=pclass, fill=survived)) +
-  geom_bar(position='fill')
+  geom_bar(position='fill') +
+  labs(x='Passenger class', y='Proportion')
 
 grid.arrange(g1p, g2p, ncol=2)
 ```
@@ -317,12 +332,14 @@ For our last graph, let's see how title relates to survival with gender.
 g1p = train %>%
   filter(sex=='female') %>%
   ggplot(aes(x=title, fill=survived)) +
-  geom_bar(position='fill', show.legend=F)
+  geom_bar(position='fill', show.legend=F) +
+  labs(x='Title', y='Proportion', title='Female')
 
 g2p = train %>%
   filter(sex=='male') %>%
   ggplot(aes(x=title, fill=survived)) +
-  geom_bar(position='fill', show.legend=F)
+  geom_bar(position='fill', show.legend=F) +
+  labs(x='Title', y='Proportion', title='Male')
 
 grid.arrange(g1p, g2p, ncol=2)
 ```
@@ -352,7 +369,8 @@ err = melt(err, id.vars='trees')
 
 err %>%
   ggplot(aes(x=trees, y=value)) +
-  geom_line(aes(color=variable))
+  geom_line(aes(color=variable)) +
+  labs(x='Trees', y='Error rate (%)', 'Error rates')
 ```
 
 This graph shows us the error rates for the random forest prediction. The red line represents the overall error rate, and the green and blue lines are the error rate for `survived = 0` and `survived = 1` predictions respectively. We can see that we predict death more accurately compared to survival. 
@@ -368,7 +386,8 @@ importance = data.frame(variables = row.names(importance), importance=round(impo
 importance %>%
   ggplot(aes(x=reorder(variables, importance), y=importance, fill=importance)) +
   geom_bar(stat='identity') +
-  coord_flip()
+  coord_flip() +
+  labs(x='Importance', y='Variable', title='Feature importance')
 ```
 
 We can see that `title`, `fare`, `sex` and `age` were the most important variables for the random forest model. 
